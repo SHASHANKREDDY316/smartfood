@@ -5,85 +5,90 @@ from firebase_admin import credentials, db
 import datetime
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # 🔥 IMPORTANT for frontend connection
 
+# ---------------- HEALTH CHECK ----------------
+@app.route('/healthz')
+def health():
+    return "OK", 200
+
+
+# ---------------- FIREBASE INIT ----------------
 cred = credentials.Certificate("smartfood_api.json")
 
-if not firebase_admin._apps:
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': 'https://smartfood-c172e-default-rtdb.firebaseio.com/'
-    })
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://smartfood-c172e-default-rtdb.firebaseio.com/'
+})
+
 
 # ---------------- CREATE LISTING ----------------
 @app.route('/api/v1/listings', methods=['POST'])
 def create_listing():
-    try:
-        data = request.get_json()
+    data = request.get_json()
 
-        listing = {
-            "restaurant": data.get("restaurant_name", "Unknown"),
-            "item": data.get("food_item", "Unknown Item"),
-            "location": data.get("location", "Unknown"),
-            "lat": data.get("lat", 0),
-            "lng": data.get("lng", 0),
-            "sale_price": round(float(data.get("original_price", 0)) * 0.15, 2),
-            "status": "AVAILABLE",
-            "assigned_to": None,
-            "proof": None,
-            "timestamp": str(datetime.datetime.now())
-        }
+    orig_price = float(data.get("original_price", 0))
 
-        ref = db.reference('listings').push(listing)
+    listing = {
+        "restaurant": data.get("restaurant_name"),
+        "item": data.get("food_item"),
+        "original_price": orig_price,
+        "sale_price": round(orig_price * 0.15, 2),
+        "location": data.get("location", ""),
+        "lat": data.get("lat", 0),
+        "lng": data.get("lng", 0),
+        "status": "AVAILABLE",
+        "assigned_to": None,
+        "timestamp": str(datetime.datetime.now())
+    }
 
-        return jsonify({"id": ref.key, "success": True}), 201
+    db.reference('listings').push(listing)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True}), 201
 
 
 # ---------------- GET LISTINGS ----------------
 @app.route('/api/v1/listings', methods=['GET'])
 def get_listings():
-    try:
-        data = db.reference('listings').get()
-        return jsonify(data if data else {}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    data = db.reference('listings').get()
+    return jsonify(data or {}), 200
 
 
 # ---------------- ACCEPT JOB ----------------
-@app.route('/api/v1/accept/<id>', methods=['POST'])
-def accept_job(id):
-    try:
-        data = request.get_json()
+@app.route('/api/v1/accept/<listing_id>', methods=['POST'])
+def accept_job(listing_id):
+    ref = db.reference(f'listings/{listing_id}')
+    listing = ref.get()
 
-        db.reference(f'listings/{id}').update({
-            "status": "ASSIGNED",
-            "assigned_to": data.get("name", "Volunteer")
-        })
+    if not listing:
+        return jsonify({"error": "Not found"}), 404
 
-        return jsonify({"success": True}), 200
+    if listing.get("status") != "AVAILABLE":
+        return jsonify({"error": "Already taken"}), 400
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    ref.update({
+        "status": "ASSIGNED",
+        "assigned_to": "Volunteer"
+    })
+
+    return jsonify({"success": True}), 200
 
 
 # ---------------- MARK DELIVERED ----------------
-@app.route('/api/v1/deliver/<id>', methods=['POST'])
-def deliver(id):
-    try:
-        data = request.get_json()
+@app.route('/api/v1/deliver/<listing_id>', methods=['POST'])
+def deliver_job(listing_id):
+    ref = db.reference(f'listings/{listing_id}')
+    listing = ref.get()
 
-        db.reference(f'listings/{id}').update({
-            "status": "DELIVERED",
-            "proof": data.get("proof", "uploaded")
-        })
+    if not listing:
+        return jsonify({"error": "Not found"}), 404
 
-        return jsonify({"success": True}), 200
+    ref.update({
+        "status": "DELIVERED"
+    })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"success": True}), 200
 
 
+# ---------------- RUN APP ----------------
 if __name__ == '__main__':
-    app.run(port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000)
