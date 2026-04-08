@@ -8,7 +8,8 @@ from geopy.distance import geodesic
 
 st.set_page_config(page_title="SmartFood", layout="wide", page_icon="🍲")
 
-API = "http://127.0.0.1:5000/api/v1"
+# 🔥 LIVE BACKEND (IMPORTANT)
+API = "https://smartfood-backend.onrender.com/api/v1"
 
 # 🎨 PREMIUM UI
 st.markdown("""
@@ -66,27 +67,26 @@ if page == "🍴 Restaurant":
                 "lng": coords[1]
             }
 
-            res = requests.post(f"{API}/listings", json=payload)
-
-            if res.status_code == 201:
-                st.success("✅ Food Listed Successfully!")
-            else:
-                st.error("Upload failed")
+            try:
+                res = requests.post(f"{API}/listings", json=payload)
+                if res.status_code == 201:
+                    st.success("✅ Food Listed Successfully!")
+                else:
+                    st.error("Upload failed")
+            except:
+                st.error("Backend not reachable")
 
 # ---------------- 🏢 NGO / YOUTH ----------------
 elif page == "🏢 NGO / Youth":
     st.header("🔎 Search Food Near You")
 
-    # 🔍 SEARCH INPUT
     search_location = st.text_input("Enter Area (e.g. Whitefield, Bangalore)")
 
     if st.button("Search"):
         st.session_state["search_location"] = search_location
 
-    # 🚀 SHOW RESULTS ONLY AFTER SEARCH
     if "search_location" in st.session_state:
         loc = st.session_state["search_location"]
-
         st.subheader(f"Results for: {loc}")
 
         try:
@@ -96,13 +96,11 @@ elif page == "🏢 NGO / Youth":
             found = False
 
             for key, val in data.items():
-
                 location = val.get("location", "").lower()
-                item = val.get("item", "Unknown Item")
-                restaurant = val.get("restaurant", "Unknown")
+                item = val.get("item") or val.get("food_item", "Unknown Item")
+                restaurant = val.get("restaurant") or val.get("restaurant_name", "Unknown")
                 status = val.get("status", "AVAILABLE")
 
-                # 🎯 MATCH LOCATION
                 if loc.lower() in location:
 
                     found = True
@@ -113,39 +111,33 @@ elif page == "🏢 NGO / Youth":
                         st.write(f"🍴 {restaurant}")
                         st.write(f"📦 Status: {status}")
 
-                        # ✅ ACCEPT FLOW
+                        # ACCEPT
                         if status == "AVAILABLE":
                             if st.button("Accept", key=f"a{key}"):
-                                requests.post(
-                                    f"{API}/accept/{key}",
-                                    json={"name": "Volunteer"}
-                                )
+                                requests.post(f"{API}/accept/{key}")
                                 st.success("✅ Job Accepted")
 
-                        # 🚚 DELIVERY FLOW
+                        # DELIVER
                         elif status == "ASSIGNED":
-                            proof = st.file_uploader(
-                                "Upload Proof", key=f"p{key}"
-                            )
-
+                            proof = st.file_uploader("Upload Proof", key=f"p{key}")
                             if proof:
                                 if st.button("Mark Delivered", key=f"d{key}"):
-                                    requests.post(
-                                        f"{API}/deliver/{key}"
-                                    )
+                                    requests.post(f"{API}/deliver/{key}")
                                     st.success("✅ Delivered")
 
                         elif status == "DELIVERED":
                             st.success("✅ Already Delivered")
 
             if not found:
-                st.warning("❌ No food listings in this area")
+                st.warning("❌ No listings in this area")
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error("Backend error")
+
+    # 🔥 MAP + DISTANCE FEATURE
     st.header("📍 Nearby Listings")
 
-    user_loc = st.text_input("Enter Your Location")
+    user_loc = st.text_input("Enter Your Location for Map")
 
     if user_loc:
         user_coords = get_coords(user_loc)
@@ -154,7 +146,6 @@ elif page == "🏢 NGO / Youth":
         data = res.json() if res.status_code == 200 else {}
 
         m = folium.Map(location=user_coords, zoom_start=12)
-
         jobs = []
 
         for key, val in data.items():
@@ -172,7 +163,7 @@ elif page == "🏢 NGO / Youth":
 
             folium.Marker(
                 [lat, lng],
-                popup=f"{val.get('item')} ({dist:.2f} km)"
+                popup=f"{val.get('food_item')} ({dist:.2f} km)"
             ).add_to(m)
 
         jobs = sorted(jobs, key=lambda x: x["distance"])
@@ -183,7 +174,9 @@ elif page == "🏢 NGO / Youth":
         st.subheader("Nearest Jobs")
 
         for job in jobs[:5]:
-            st.write(f"🍲 {job.get('item')}")
+            item = job.get("food_item", "Food")
+
+            st.write(f"🍲 {item}")
             st.write(f"📍 {job.get('location')}")
             st.write(f"📏 {job['distance']:.2f} km")
 
@@ -194,24 +187,29 @@ elif page == "🏢 NGO / Youth":
 
             elif job.get("status") == "ASSIGNED":
                 proof = st.file_uploader("Upload Proof", key=job["id"])
-
                 if proof:
                     if st.button("Deliver", key=f"d{job['id']}"):
                         requests.post(f"{API}/deliver/{job['id']}")
                         st.success("Delivered!")
 
             elif job.get("status") == "DELIVERED":
-                st.success(f"✅ Delivered: {job.get('item')}")
+                st.success(f"✅ Delivered")
 
 # ---------------- 📦 STATUS ----------------
 elif page == "📦 Delivery Status":
     st.header("All Deliveries")
 
-    res = requests.get(f"{API}/listings")
-    data = res.json() if res.status_code == 200 else {}
+    try:
+        res = requests.get(f"{API}/listings")
+        data = res.json() if res.status_code == 200 else {}
 
-    for val in data.values():
-        st.write(f"{val.get('item')} → {val.get('status')}")
+        for val in data.values():
+            item = val.get("food_item", "Food")
+            status = val.get("status", "UNKNOWN")
+            st.write(f"{item} → {status}")
+
+    except:
+        st.error("Backend not reachable")
 
 # 🔁 AUTO REFRESH
 time.sleep(3)
