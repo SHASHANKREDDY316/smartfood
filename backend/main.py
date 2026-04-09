@@ -6,6 +6,11 @@ import datetime
 import os
 import json
 
+# 🔥 NEW IMPORTS FOR IMAGE UPLOAD
+from google.cloud import storage
+import base64
+import uuid
+
 app = Flask(__name__)
 CORS(app)
 
@@ -37,6 +42,32 @@ except Exception as e:
     print("❌ Firebase error:", e)
 
 
+# ---------------- IMAGE UPLOAD FUNCTION ----------------
+def upload_image_to_firebase(image_base64, folder="images"):
+    try:
+        bucket_name = "smartfood-c172e.appspot.com"
+
+        client = storage.Client.from_service_account_info(
+            json.loads(os.environ.get("FIREBASE_KEY"))
+        )
+
+        bucket = client.bucket(bucket_name)
+
+        filename = f"{folder}/{uuid.uuid4().hex}.jpg"
+        blob = bucket.blob(filename)
+
+        image_data = base64.b64decode(image_base64)
+        blob.upload_from_string(image_data, content_type='image/jpeg')
+
+        blob.make_public()
+
+        return blob.public_url
+
+    except Exception as e:
+        print("❌ Image upload error:", e)
+        return None
+
+
 # ---------------- CREATE LISTING ----------------
 @app.route('/api/v1/listings', methods=['POST'])
 def create_listing():
@@ -44,6 +75,10 @@ def create_listing():
         data = request.get_json()
 
         orig_price = float(data.get("original_price", 0))
+
+        # 📸 FOOD IMAGE
+        image_base64 = data.get("image")
+        image_url = upload_image_to_firebase(image_base64, "food") if image_base64 else None
 
         listing = {
             "restaurant": data.get("restaurant_name"),
@@ -53,6 +88,7 @@ def create_listing():
             "location": data.get("location", ""),
             "lat": data.get("lat", 0),
             "lng": data.get("lng", 0),
+            "image": image_url,
             "status": "AVAILABLE",
             "assigned_to": None,
             "timestamp": str(datetime.datetime.now())
@@ -111,8 +147,15 @@ def deliver_job(listing_id):
         if not listing:
             return jsonify({"error": "Not found"}), 404
 
+        data = request.get_json()
+
+        # 📸 DELIVERY PROOF IMAGE
+        proof_base64 = data.get("proof")
+        proof_url = upload_image_to_firebase(proof_base64, "delivery") if proof_base64 else None
+
         ref.update({
-            "status": "DELIVERED"
+            "status": "DELIVERED",
+            "proof": proof_url
         })
 
         return jsonify({"success": True}), 200
