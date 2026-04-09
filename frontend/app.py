@@ -1,216 +1,97 @@
-import streamlit as st
-import requests
-import time
-from streamlit_folium import st_folium
-import folium
-from geopy.geocoders import Nominatim
-from geopy.distance import geodesic
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import firebase_admin
+from firebase_admin import credentials, db
+import datetime
+import os
+import json
 
-st.set_page_config(page_title="SmartFood", layout="wide", page_icon="🍲")
+app = Flask(__name__)
+CORS(app)
 
-# 🔥 LIVE BACKEND (IMPORTANT)
-API = "https://smartfood-backend.onrender.com/api/v1"
+# ---------------- HEALTH CHECK ----------------
+@app.route('/healthz')
+def health():
+    return "OK", 200
 
-# 🎨 PREMIUM UI
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(to right, #0f2027, #203a43, #2c5364);
-    color: white;
-}
-.stButton>button {
-    border-radius: 20px;
-    background: linear-gradient(45deg, #00c6ff, #0072ff);
-    color: white;
-}
-</style>
-""", unsafe_allow_html=True)
 
-# 📍 GEO
-geolocator = Nominatim(user_agent="smartfood")
+# ---------------- FIREBASE INIT ----------------
+cred_dict = json.loads(os.environ.get("FIREBASE_KEY"))
 
-def get_coords(location):
-    try:
-        loc = geolocator.geocode(location)
-        return (loc.latitude, loc.longitude)
-    except:
-        return (0, 0)
+firebase_admin.initialize_app(credentials.Certificate(cred_dict), {
+    'databaseURL': 'https://smartfood-c172e-default-rtdb.firebaseio.com/'
+})
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.title("SmartFood Ecosystem")
-page = st.sidebar.selectbox(
-    "Select Role",
-    ["🍴 Restaurant", "🏢 NGO / Youth", "📦 Delivery Status"]
-)
 
-# ---------------- 🍴 RESTAURANT ----------------
-if page == "🍴 Restaurant":
-    st.header("Upload Surplus Food")
+# ---------------- CREATE LISTING ----------------
+@app.route('/api/v1/listings', methods=['POST'])
+def create_listing():
+    data = request.get_json()
 
-    with st.form("food_form"):
-        name = st.text_input("Restaurant Name")
-        item = st.text_input("Food Item")
-        price = st.number_input("Original Price", min_value=0.0)
-        location = st.text_input("Location")
+    orig_price = float(data.get("original_price", 0))
 
-        submit = st.form_submit_button("Upload")
+    listing = {
+        "restaurant": data.get("restaurant_name"),
+        "item": data.get("food_item"),
+        "original_price": orig_price,
+        "sale_price": round(orig_price * 0.15, 2),
+        "location": data.get("location", ""),
+        "lat": data.get("lat", 0),
+        "lng": data.get("lng", 0),
+        "status": "AVAILABLE",
+        "assigned_to": None,
+        "timestamp": str(datetime.datetime.now())
+    }
 
-        if submit:
-            coords = get_coords(location)
+    db.reference('listings').push(listing)
 
-            payload = {
-                "restaurant_name": name,
-                "food_item": item,
-                "original_price": price,
-                "location": location,
-                "lat": coords[0],
-                "lng": coords[1]
-            }
+    return jsonify({"success": True}), 201
 
-            try:
-                res = requests.post(f"{API}/listings", json=payload)
-                if res.status_code == 201:
-                    st.success("✅ Food Listed Successfully!")
-                else:
-                    st.error("Upload failed")
-            except:
-                st.error("Backend not reachable")
 
-# ---------------- 🏢 NGO / YOUTH ----------------
-elif page == "🏢 NGO / Youth":
-    st.header("🔎 Search Food Near You")
+# ---------------- GET LISTINGS ----------------
+@app.route('/api/v1/listings', methods=['GET'])
+def get_listings():
+    data = db.reference('listings').get()
+    return jsonify(data or {}), 200
 
-    search_location = st.text_input("Enter Area (e.g. Whitefield, Bangalore)")
 
-    if st.button("Search"):
-        st.session_state["search_location"] = search_location
+# ---------------- ACCEPT JOB ----------------
+@app.route('/api/v1/accept/<listing_id>', methods=['POST'])
+def accept_job(listing_id):
+    ref = db.reference(f'listings/{listing_id}')
+    listing = ref.get()
 
-    if "search_location" in st.session_state:
-        loc = st.session_state["search_location"]
-        st.subheader(f"Results for: {loc}")
+    if not listing:
+        return jsonify({"error": "Not found"}), 404
 
-        try:
-            res = requests.get(f"{API}/listings")
-            data = res.json() if res.status_code == 200 else {}
+    if listing.get("status") != "AVAILABLE":
+        return jsonify({"error": "Already taken"}), 400
 
-            found = False
+    ref.update({
+        "status": "ASSIGNED",
+        "assigned_to": "Volunteer"
+    })
 
-            for key, val in data.items():
-                location = val.get("location", "").lower()
-                item = val.get("item") or val.get("food_item", "Unknown Item")
-                restaurant = val.get("restaurant") or val.get("restaurant_name", "Unknown")
-                status = val.get("status", "AVAILABLE")
+    return jsonify({"success": True}), 200
 
-                if loc.lower() in location:
 
-                    found = True
+# ---------------- MARK DELIVERED ----------------
+@app.route('/api/v1/deliver/<listing_id>', methods=['POST'])
+def deliver_job(listing_id):
+    ref = db.reference(f'listings/{listing_id}')
+    listing = ref.get()
 
-                    with st.container(border=True):
-                        st.write(f"🍲 {item}")
-                        st.write(f"📍 {val.get('location')}")
-                        st.write(f"🍴 {restaurant}")
-                        st.write(f"📦 Status: {status}")
+    if not listing:
+        return jsonify({"error": "Not found"}), 404
 
-                        # ACCEPT
-                        if status == "AVAILABLE":
-                            if st.button("Accept", key=f"a{key}"):
-                                requests.post(f"{API}/accept/{key}")
-                                st.success("✅ Job Accepted")
+    ref.update({
+        "status": "DELIVERED"
+    })
 
-                        # DELIVER
-                        elif status == "ASSIGNED":
-                            proof = st.file_uploader("Upload Proof", key=f"p{key}")
-                            if proof:
-                                if st.button("Mark Delivered", key=f"d{key}"):
-                                    requests.post(f"{API}/deliver/{key}")
-                                    st.success("✅ Delivered")
+    return jsonify({"success": True}), 200
 
-                        elif status == "DELIVERED":
-                            st.success("✅ Already Delivered")
 
-            if not found:
-                st.warning("❌ No listings in this area")
-
-        except Exception as e:
-            st.error("Backend error")
-
-    # 🔥 MAP + DISTANCE FEATURE
-    st.header("📍 Nearby Listings")
-
-    user_loc = st.text_input("Enter Your Location for Map")
-
-    if user_loc:
-        user_coords = get_coords(user_loc)
-
-        res = requests.get(f"{API}/listings")
-        data = res.json() if res.status_code == 200 else {}
-
-        m = folium.Map(location=user_coords, zoom_start=12)
-        jobs = []
-
-        for key, val in data.items():
-            lat = val.get("lat", 0)
-            lng = val.get("lng", 0)
-
-            if lat == 0:
-                continue
-
-            dist = geodesic(user_coords, (lat, lng)).km
-
-            val["distance"] = dist
-            val["id"] = key
-            jobs.append(val)
-
-            folium.Marker(
-                [lat, lng],
-                popup=f"{val.get('food_item')} ({dist:.2f} km)"
-            ).add_to(m)
-
-        jobs = sorted(jobs, key=lambda x: x["distance"])
-
-        st.subheader("🗺 Live Map")
-        st_folium(m, width=700)
-
-        st.subheader("Nearest Jobs")
-
-        for job in jobs[:5]:
-            item = job.get("food_item", "Food")
-
-            st.write(f"🍲 {item}")
-            st.write(f"📍 {job.get('location')}")
-            st.write(f"📏 {job['distance']:.2f} km")
-
-            if job.get("status") == "AVAILABLE":
-                if st.button("Accept", key=job["id"]):
-                    requests.post(f"{API}/accept/{job['id']}")
-                    st.success("Accepted!")
-
-            elif job.get("status") == "ASSIGNED":
-                proof = st.file_uploader("Upload Proof", key=job["id"])
-                if proof:
-                    if st.button("Deliver", key=f"d{job['id']}"):
-                        requests.post(f"{API}/deliver/{job['id']}")
-                        st.success("Delivered!")
-
-            elif job.get("status") == "DELIVERED":
-                st.success(f"✅ Delivered")
-
-# ---------------- 📦 STATUS ----------------
-elif page == "📦 Delivery Status":
-    st.header("All Deliveries")
-
-    try:
-        res = requests.get(f"{API}/listings")
-        data = res.json() if res.status_code == 200 else {}
-
-        for val in data.values():
-            item = val.get("food_item", "Food")
-            status = val.get("status", "UNKNOWN")
-            st.write(f"{item} → {status}")
-
-    except:
-        st.error("Backend not reachable")
-
-# 🔁 AUTO REFRESH
-time.sleep(3)
-st.rerun()
+# ---------------- RUN APP ----------------
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
