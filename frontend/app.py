@@ -11,37 +11,109 @@ API = "https://smartfood-backend-ssr.onrender.com/api/v1"
 # ---------------- STYLE ----------------
 st.markdown("""
 <style>
+.stApp {
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+}
+
+/* HEADER */
+.header {
+    text-align: center;
+    padding: 20px;
+}
+.header h1 {
+    color: white;
+    font-size: 40px;
+}
+.header p {
+    color: #aaa;
+}
+
+/* NAV */
+.nav {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+/* CARD */
 .card {
-    background-color: #1e1e1e;
+    background: rgba(255,255,255,0.05);
+    padding: 20px;
+    border-radius: 20px;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.1);
+    margin-bottom: 20px;
+}
+
+/* BUTTON */
+.stButton>button {
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+    color: white;
+    border-radius: 10px;
+    border: none;
+}
+
+/* STATS */
+.stat {
+    background: rgba(255,255,255,0.05);
     padding: 15px;
     border-radius: 15px;
-    margin-bottom: 15px;
-    box-shadow: 0px 0px 10px rgba(0,0,0,0.5);
+    text-align: center;
+}
+.stat h2 {
+    color: #6366f1;
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------- HEADER ----------------
+st.markdown("""
+<div class="header">
+    <h1>🍽️ Smart Food Waste Redistribution System</h1>
+    <p>Connect Hotels with NGOs to reduce food waste and help communities</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------- MENU ----------------
+menu = st.radio(
+    "",
+    ["🍴 Restaurant", "🏢 NGO Dashboard", "📦 Delivery Tracking"],
+    horizontal=True
+)
 
 # ---------------- IMAGE ENCODE ----------------
 def encode_image(img):
     return base64.b64encode(img.read()).decode()
 
-# ---------------- SIDEBAR ----------------
-page = st.sidebar.selectbox(
-    "Select Role",
-    ["🍴 Restaurant", "🏢 NGO / Youth", "📦 Delivery Status"]
-)
+# ---------------- STATS ----------------
+def get_stats(data):
+    total = len(data)
+    available = sum(1 for v in data.values() if v["status"] == "AVAILABLE")
+    assigned = sum(1 for v in data.values() if v["status"] == "ASSIGNED")
+    delivered = sum(1 for v in data.values() if v["status"] == "DELIVERED")
+    return total, available, assigned, delivered
+
 
 # ---------------- 🍴 RESTAURANT ----------------
-if page == "🍴 Restaurant":
-    st.header("Upload Food")
+if menu == "🍴 Restaurant":
 
-    name = st.text_input("Restaurant Name")
-    item = st.text_input("Food Item")
-    price = st.number_input("Price", min_value=0.0)
-    location = st.text_input("Location")
-    image = st.file_uploader("Upload Food Image", type=["jpg", "png"])
+    st.subheader("Upload Food Listing")
 
-    if st.button("Submit"):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        name = st.text_input("Restaurant Name")
+        item = st.text_input("Food Item")
+        price = st.number_input("Price", min_value=0.0)
+        location = st.text_input("Location")
+
+    with col2:
+        image = st.file_uploader("Upload Food Image", type=["jpg", "png"])
+        if image:
+            st.image(image, use_container_width=True)
+
+    if st.button("🚀 Submit Listing"):
         img_base64 = encode_image(image) if image else None
 
         payload = {
@@ -56,90 +128,109 @@ if page == "🍴 Restaurant":
 
         try:
             res = requests.post(f"{API}/listings", json=payload)
-
             if res.status_code == 201:
-                st.success("✅ Uploaded Successfully")
+                st.success("✅ Food Uploaded Successfully")
             else:
                 st.error("Upload failed")
-
         except:
             st.error("Backend not reachable")
 
-# ---------------- 🏢 NGO ----------------
-elif page == "🏢 NGO / Youth":
-    st.header("Available Food")
+
+# ---------------- 🏢 NGO DASHBOARD ----------------
+elif menu == "🏢 NGO Dashboard":
+
+    st.subheader("Available Food")
 
     try:
         res = requests.get(f"{API}/listings")
         data = res.json() if res.status_code == 200 else {}
 
-        for key, val in data.items():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
+        total, available, assigned, delivered = get_stats(data)
 
-            st.subheader(val.get("item"))
-            st.write("📍", val.get("location"))
-            st.write("📦 Status:", val.get("status"))
+        # Stats Row
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(f"<div class='stat'><h2>{total}</h2>Total</div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='stat'><h2>{available}</h2>Available</div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='stat'><h2>{assigned}</h2>Assigned</div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='stat'><h2>{delivered}</h2>Delivered</div>", unsafe_allow_html=True)
 
-            if val.get("image"):
-                st.image(val["image"], width=250)
+        st.markdown("---")
 
-            # ACCEPT
-            if val.get("status") == "AVAILABLE":
-                if st.button("Accept", key=f"a{key}"):
-                    requests.post(f"{API}/accept/{key}")
-                    st.success("Accepted")
+        cols = st.columns(2)
 
-            # DELIVERY WITH PROOF
-            elif val.get("status") == "ASSIGNED":
-                proof = st.file_uploader("Upload Proof", key=f"p{key}")
+        for i, (key, val) in enumerate(data.items()):
+            with cols[i % 2]:
+                st.markdown("<div class='card'>", unsafe_allow_html=True)
 
-                if proof and st.button("Deliver", key=f"d{key}"):
-                    proof_base64 = encode_image(proof)
+                st.subheader(val.get("item"))
+                st.write("🏪", val.get("restaurant"))
+                st.write("📍", val.get("location"))
+                st.write("📦 Status:", val.get("status"))
 
-                    requests.post(
-                        f"{API}/deliver/{key}",
-                        json={"proof": proof_base64}
-                    )
+                if val.get("image"):
+                    st.image(val["image"], use_container_width=True)
 
-                    st.success("Delivered with proof")
+                if val.get("status") == "AVAILABLE":
+                    if st.button("Accept", key=f"a{key}"):
+                        requests.post(f"{API}/accept/{key}")
+                        st.rerun()
 
-            else:
-                st.success("Delivered")
+                elif val.get("status") == "ASSIGNED":
+                    proof = st.file_uploader("Upload Proof", key=f"p{key}")
+                    if proof and st.button("Deliver", key=f"d{key}"):
+                        proof_base64 = encode_image(proof)
+                        requests.post(
+                            f"{API}/deliver/{key}",
+                            json={"proof": proof_base64}
+                        )
+                        st.rerun()
 
-            st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.success("Delivered")
+
+                st.markdown("</div>", unsafe_allow_html=True)
 
     except:
         st.error("Error loading data")
 
-# ---------------- 📦 DELIVERY STATUS ----------------
-elif page == "📦 Delivery Status":
-    st.header("All Deliveries")
+
+# ---------------- 📦 DELIVERY TRACKING ----------------
+elif menu == "📦 Delivery Tracking":
+
+    st.subheader("Track Deliveries")
 
     try:
         res = requests.get(f"{API}/listings")
         data = res.json() if res.status_code == 200 else {}
 
         for val in data.values():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
 
             st.subheader(val.get("item"))
             st.write("📍", val.get("location"))
             st.write("📦 Status:", val.get("status"))
 
-            # FOOD IMAGE
+            progress = {
+                "AVAILABLE": 0.3,
+                "ASSIGNED": 0.6,
+                "DELIVERED": 1.0
+            }.get(val.get("status"), 0)
+
+            st.progress(progress)
+
             if val.get("image"):
-                st.image(val["image"], width=200)
+                st.image(val["image"], width=250)
 
-            # DELIVERY PROOF
             if val.get("proof"):
-                st.write("📸 Delivery Proof:")
-                st.image(val["proof"], width=200)
+                st.write("📸 Delivery Proof")
+                st.image(val["proof"], width=250)
 
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
     except:
         st.error("Backend not reachable")
 
+
 # ---------------- AUTO REFRESH ----------------
-time.sleep(3)
+time.sleep(5)
 st.rerun()
